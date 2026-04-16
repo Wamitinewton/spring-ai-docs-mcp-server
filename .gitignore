@@ -1,0 +1,77 @@
+.env
+.env.*
+!.env.example
+
+# RSA keys
+keys/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Poetry
+dist/
+*.egg-info/
+.eggs/
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+
+# mypy / pyright
+.mypy_cache/
+.pyright/
+pyrightconfig.json
+
+# Alembic — never commit auto-generated versions blindly, but do commit intentional ones
+# (leave versions/ tracked — remove this comment if you want to exclude them)
+
+# Docker volumes & local DB data
+postgres_data/
+redis_data/
+
+# Uploaded / temporary files
+uploads/
+tmp/
+*.tmp
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Jupyter (if ever used for exploration)
+.ipynb_checkpoints/
+store
