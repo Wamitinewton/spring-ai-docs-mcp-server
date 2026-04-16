@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "springai-kb": {
+      "type": "stdio",
+      "command": "/home/newton/Desktop/projects/springai-mcp/.venv/bin/python",
+      "args": ["/home/newton/Desktop/projects/springai-mcp/mcp_server.py"],
+      "env": {
+        "SPRINGAI_API_URL": "http://localhost:8000"
+      }
+    }
+  }
+}

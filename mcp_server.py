@@ -1,29 +1,6 @@
-"""
-mcp_server.py — Spring AI MCP Server (stdio transport)
-
-This is the entry point Claude Code calls via the MCP protocol.
-It exposes three tools that internally call the FastAPI server:
-
-  search_spring_ai   — semantic search over docs
-  get_document       — fetch all chunks for a specific doc
-  list_topics        — discover what's indexed
-
-Configure in .mcp.json:
-  {
-    "mcpServers": {
-      "springai": {
-        "command": "/path/to/.venv/bin/python",
-        "args": ["/path/to/springai-mcp/mcp_server.py"],
-        "env": { "SPRINGAI_API_URL": "http://localhost:8000" }
-      }
-    }
-  }
-"""
-
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import sys
@@ -36,9 +13,8 @@ import mcp.types as types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
-# ── config ──────────────────────────────────────────────────────────────────
-API_BASE = os.environ.get("SPRINGAI_API_URL", "http://localhost:8000")
-HTTP_TIMEOUT = 15.0      # seconds
+API_BASE      = os.environ.get("SPRINGAI_API_URL", "http://localhost:8000")
+HTTP_TIMEOUT  = 15.0
 DEFAULT_TOP_K = 6
 
 logging.basicConfig(
@@ -50,10 +26,6 @@ log = logging.getLogger("springai-mcp")
 
 server = Server("springai-kb")
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Tool definitions
-# ═══════════════════════════════════════════════════════════════════════════
 
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
@@ -69,8 +41,8 @@ async def handle_list_tools() -> list[types.Tool]:
                 - Look up property names, API classes, or integration patterns
                 - Understand concepts like RAG, advisors, structured output, tool calling
 
-                Returns ranked chunks with full text including code blocks.
-                Each chunk includes a heading_path (e.g. "Ollama Chat > Function Calling")
+                Returns ranked chunks with full text including language-tagged code blocks.
+                Each result includes its heading_path (e.g. "Ollama Chat > Tool Calling")
                 so you know exactly where in the docs it came from.
             """),
             inputSchema={
@@ -102,7 +74,7 @@ async def handle_list_tools() -> list[types.Tool]:
                     },
                     "require_code": {
                         "type": "boolean",
-                        "description": "If true, only return chunks that contain code blocks",
+                        "description": "If true, only return chunks that contain code blocks.",
                         "default": False,
                     },
                 },
@@ -115,7 +87,7 @@ async def handle_list_tools() -> list[types.Tool]:
                 Fetch the complete contents of a Spring AI documentation page by its doc_id.
 
                 Use this after search_spring_ai identifies a relevant document and you want
-                to read the full page — not just the matched chunk — for complete context.
+                the full page — not just the matched chunk — for complete context.
 
                 Returns all chunks in reading order with full text and code blocks preserved.
             """),
@@ -144,7 +116,7 @@ async def handle_list_tools() -> list[types.Tool]:
                 - Find the exact doc_id to pass to get_document or filter_doc
                 - See which topics have code examples (has_code_chunks > 0)
 
-                Returns each document with its title, category, and chunk count.
+                Returns each document with its title, category, and chunk counts.
             """),
             inputSchema={
                 "type": "object",
@@ -160,57 +132,50 @@ async def handle_list_tools() -> list[types.Tool]:
     ]
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Tool handlers
-# ═══════════════════════════════════════════════════════════════════════════
-
-def _fmt_chunk(chunk: dict, rank: int) -> str:
-    """Format a single search result chunk for Claude Code consumption."""
-    lines = [
-        f"## Result {rank}  (score: {chunk['score']:.3f})",
-        f"**Doc**: `{chunk['doc_id']}`  |  **Title**: {chunk['title']}",
-        f"**Section**: {chunk['heading_path'] or '(top level)'}",
-        f"**Has code**: {'yes' if chunk['has_code'] else 'no'}  |  "
-        f"**Tokens**: ~{chunk['token_count']}",
-        "",
-        chunk["text"],
-        "",
-        "---",
-    ]
-    return "\n".join(lines)
-
-
-def _fmt_doc_chunk(chunk: dict) -> str:
-    """Format a single chunk from a full document fetch."""
-    lines = [
-        f"### Chunk {chunk['chunk_index']}  —  {chunk['heading_path'] or '(top level)'}",
-        "",
-        chunk["text"],
-        "",
-    ]
-    return "\n".join(lines)
-
-
 async def _call_api(method: str, path: str, **kwargs: Any) -> Any:
-    """Make an HTTP call to the FastAPI server with clear error messages."""
     url = f"{API_BASE}{path}"
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
         try:
-            if method == "POST":
-                resp = await client.post(url, **kwargs)
-            else:
-                resp = await client.get(url, **kwargs)
+            resp = await (
+                client.post(url, **kwargs) if method == "POST" else client.get(url, **kwargs)
+            )
             resp.raise_for_status()
             return resp.json()
         except httpx.ConnectError:
             raise RuntimeError(
                 f"Cannot connect to Spring AI API at {API_BASE}. "
-                "Make sure the server is running: "
-                "uvicorn server:app --host 0.0.0.0 --port 8000"
+                "Start the server: uvicorn server:app --host 0.0.0.0 --port 8000"
             )
         except httpx.HTTPStatusError as e:
             detail = e.response.json().get("detail", str(e))
             raise RuntimeError(f"API error {e.response.status_code}: {detail}")
+
+
+def _fmt_search_result(chunk: dict, rank: int) -> str:
+    meta_parts = [f"`{chunk['doc_id']}`", chunk["category"]]
+    if chunk.get("code_language"):
+        meta_parts.append(chunk["code_language"])
+    meta_parts.append(chunk.get("chunk_type", "prose"))
+
+    return "\n".join([
+        f"### [{rank}] {chunk.get('heading_path') or chunk['title']}",
+        f"**Source:** {' · '.join(meta_parts)}  |  **Score:** {chunk['score']:.3f}",
+        "",
+        chunk["text"],
+    ])
+
+
+def _fmt_doc_chunk(chunk: dict) -> str:
+    type_note = chunk.get("chunk_type", "prose")
+    if chunk.get("code_language"):
+        type_note = f"{type_note} · {chunk['code_language']}"
+
+    return "\n".join([
+        f"### {chunk.get('heading_path') or '(top level)'}",
+        f"*{type_note}*",
+        "",
+        chunk["text"],
+    ])
 
 
 @server.call_tool()
@@ -238,20 +203,21 @@ async def handle_call_tool(
             if not data["results"]:
                 return [types.TextContent(
                     type="text",
-                    text=f"No results found for: '{query}'\n\nTry broader terms or use list_topics to discover available docs.",
+                    text=(
+                        f"No results found for: '{query}'\n\n"
+                        "Try broader terms or use list_topics to discover available docs."
+                    ),
                 )]
 
-            parts = [
-                f"# Spring AI Docs — Search Results\n",
-                f"**Query**: {data['query']}  |  "
-                f"**Results**: {data['total_results']}  |  "
-                f"**Time**: {data['elapsed_ms']:.0f}ms\n",
-                "---\n",
-            ]
+            rerank_note = " · reranked" if data.get("reranked") else ""
+            header = (
+                f"# Spring AI Docs — Search: {data['query']}\n"
+                f"**{data['total_results']} results** · {data['elapsed_ms']:.0f}ms{rerank_note}"
+            )
+            items: list[types.TextContent] = [types.TextContent(type="text", text=header)]
             for i, chunk in enumerate(data["results"], 1):
-                parts.append(_fmt_chunk(chunk, i))
-
-            return [types.TextContent(type="text", text="\n".join(parts))]
+                items.append(types.TextContent(type="text", text=_fmt_search_result(chunk, i)))
+            return items
 
         elif name == "get_document":
             doc_id = args.get("doc_id", "").strip()
@@ -260,17 +226,16 @@ async def handle_call_tool(
 
             data = await _call_api("GET", f"/docs/{doc_id}")
 
-            parts = [
-                f"# {data['title']}\n",
-                f"**Category**: {data['category']}  |  "
-                f"**Doc ID**: `{data['doc_id']}`  |  "
-                f"**Chunks**: {data['total_chunks']}\n",
-                "---\n",
-            ]
+            header = (
+                f"# {data['title']}\n"
+                f"**Category:** {data['category']}  |  "
+                f"**Doc ID:** `{data['doc_id']}`  |  "
+                f"**Chunks:** {data['total_chunks']}"
+            )
+            items = [types.TextContent(type="text", text=header)]
             for chunk in data["chunks"]:
-                parts.append(_fmt_doc_chunk(chunk))
-
-            return [types.TextContent(type="text", text="\n".join(parts))]
+                items.append(types.TextContent(type="text", text=_fmt_doc_chunk(chunk)))
+            return items
 
         elif name == "list_topics":
             params = {}
@@ -280,10 +245,13 @@ async def handle_call_tool(
             data = await _call_api("GET", "/list", params=params)
 
             if not data:
-                return [types.TextContent(type="text", text="No documents indexed yet. Run `python ingest.py`.")]
+                return [types.TextContent(
+                    type="text",
+                    text="No documents indexed yet. Run `python ingest.py`.",
+                )]
 
             lines = [
-                "# Spring AI Knowledge Base — Available Topics\n",
+                "# Spring AI Knowledge Base — Topics\n",
                 f"{'Doc ID':<35} {'Title':<40} {'Category':<15} {'Chunks':>6} {'w/Code':>6}",
                 "-" * 105,
             ]
@@ -292,7 +260,6 @@ async def handle_call_tool(
                     f"{doc['doc_id']:<35} {doc['title']:<40} {doc['category']:<15} "
                     f"{doc['chunk_count']:>6} {doc['has_code_chunks']:>6}"
                 )
-
             return [types.TextContent(type="text", text="\n".join(lines))]
 
         else:
@@ -304,10 +271,6 @@ async def handle_call_tool(
         log.exception("Unexpected error in tool %s", name)
         return [types.TextContent(type="text", text=f"Unexpected error: {e}")]
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Entry point
-# ═══════════════════════════════════════════════════════════════════════════
 
 async def main() -> None:
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
